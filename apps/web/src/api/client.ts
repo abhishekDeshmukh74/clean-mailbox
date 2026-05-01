@@ -60,6 +60,32 @@ export interface AgentRunResult {
   lastRunAt: string;
 }
 
+export interface AgentStepEvent {
+  type: "step";
+  node: string;
+  label: string;
+  status: "started" | "done";
+  count?: number;
+  digestPreview?: string;
+  messagesLabeled?: number;
+  labelsApplied?: number;
+}
+
+export interface AgentDoneEvent {
+  type: "done";
+  result: AgentRunResult;
+}
+
+export interface AgentErrorEvent {
+  type: "error";
+  message: string;
+}
+
+export type AgentStreamEvent =
+  | AgentStepEvent
+  | AgentDoneEvent
+  | AgentErrorEvent;
+
 export interface LabelEntry {
   name: string;
   description?: string;
@@ -83,6 +109,38 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ limit }),
     }),
+  runAgentsStream: async (
+    limit: number,
+    onEvent: (e: AgentStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${API_URL}/agents/run/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ limit }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => "");
+      throw new ApiError(res.status, text || res.statusText);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const event = parseSSE(block);
+        if (event) onEvent(event);
+      }
+    }
+  },
   getLabelSettings: () => request<LabelSettings>("/settings/labels"),
   saveLabelSettings: (s: LabelSettings) =>
     request<LabelSettings>("/settings/labels", {
@@ -94,3 +152,25 @@ export const api = {
       "/settings/gmail-labels"
     ),
 };
+
+function parseSSE(block: string): AgentStreamEvent | null {
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const raw of block.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  if (dataLines.length === 0) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(dataLines.join("\n"));
+  } catch {
+    return null;
+  }
+  if (event === "step") return { type: "step", ...(payload as object) } as AgentStepEvent;
+  if (event === "done") return { type: "done", result: payload as AgentRunResult };
+  if (event === "error") return { type: "error", message: (payload as { message?: string })?.message ?? "Unknown error" };
+  return null;
+}
