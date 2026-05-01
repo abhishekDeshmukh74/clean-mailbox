@@ -1,32 +1,5 @@
-// Shared API contract between FastAPI backend and React frontend.
+// Shared types used across apps.
+// Currently a placeholder — both apps define their own interfaces to avoid
+// coupling the Python API response shapes to a shared build step.
 
-export interface MeResponse {
-  email: string;
-  name?: string;
-  picture?: string;
-}
-
-export interface EmailItem {
-  id: string;
-  threadId: string;
-  from: string;
-  subject: string;
-  date: string;
-  snippet: string;
-  labels: string[];
-  summary?: string;
-  category?: string;
-}
-
-export interface DashboardSummary {
-  totals: { emails: number };
-  byCategory: Record<string, number>;
-  digest: string;
-  lastRunAt: string | null;
-}
-
-export interface AgentRunResult {
-  processed: number;
-  digest: string;
-  lastRunAt: string;
-}
+export type {};
